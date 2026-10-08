@@ -1,0 +1,75 @@
+name: MutaTest — AI Test Quality Gate
+
+on:
+  push:
+    paths:
+      - 'src/main/java/**/*.java'
+  pull_request:
+    paths:
+      - 'src/main/java/**/*.java'
+
+jobs:
+  mutaTest-verify:
+    name: Verify AI-Generated Test Quality
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+
+      - name: Get changed Java files
+        id: changed
+        run: |
+          FILES=$(git diff --name-only HEAD~1 HEAD -- '*.java' \
+            | grep 'src/main/java' | tr '\n' ',')
+          echo "files=$FILES" >> $GITHUB_OUTPUT
+          echo "[MutaTest] Changed files: $FILES"
+
+      - name: Skip if no Java files changed
+        if: steps.changed.outputs.files == ''
+        run: echo "[MutaTest] No Java files changed. Skipping." && exit 0
+
+      - name: Pull MutaTest Docker image
+        run: docker pull sreenithi20/mutaTest-verify:latest
+
+      - name: Run MutaTest pipeline
+        env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          MONGODB_URI: ${{ secrets.MONGODB_URI }}
+        run: |
+          docker run --rm \
+            -e GEMINI_API_KEY=$GEMINI_API_KEY \
+            -e SPRING_DATA_MONGODB_URI=$MONGODB_URI \
+            -e SPRING_PROFILES_ACTIVE=cli \
+            -v ${{ github.workspace }}:/workspace \
+            sreenithi20/mutaTest-verify:latest \
+            --mode=cli \
+            --source=/workspace/${{ steps.changed.outputs.files }} \
+            --target-score=70 \
+            --max-rounds=3 \
+            --output=/workspace/mutaTest-report.json
+
+      - name: Upload reports as artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: MutaTest-Quality-Report
+          path: |
+            mutaTest-report.json
+            mutaTest-report.html
+          retention-days: 30
+
+      - name: Write pipeline summary
+        if: always()
+        run: |
+          if [ -f mutaTest-report.json ]; then
+            STATUS=$(python3 -c \
+              "import sys,json; \
+               d=json.load(open('mutaTest-report.json')); \
+               print(d['overallStatus'])")
+            echo "### MutaTest Quality Gate: $STATUS" >> $GITHUB_STEP_SUMMARY
+            echo "Target mutation score: 70%" >> $GITHUB_STEP_SUMMARY
+            echo "See MutaTest-Quality-Report artifact for full details." \
+              >> $GITHUB_STEP_SUMMARY
+          fi
