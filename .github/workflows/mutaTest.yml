@@ -21,8 +21,13 @@ jobs:
       - name: Get changed Java files
         id: changed
         run: |
-          FILES=$(git diff --name-only HEAD~1 HEAD -- '*.java' \
-            | grep 'src/main/java' | tr '\n' ',')
+          if git rev-parse HEAD~1 > /dev/null 2>&1; then
+            FILES=$(git diff --name-only HEAD~1 HEAD -- '*.java' \
+              | grep 'src/main/java' | tr '\n' ',')
+          else
+            FILES=$(git diff-tree --no-commit-id -r --name-only HEAD -- '*.java' \
+              | grep 'src/main/java' | tr '\n' ',')
+          fi
           echo "files=$FILES" >> $GITHUB_OUTPUT
           echo "[MutaTest] Changed files: $FILES"
 
@@ -31,7 +36,7 @@ jobs:
         run: echo "[MutaTest] No Java files changed. Skipping." && exit 0
 
       - name: Pull MutaTest Docker image
-        run: docker pull sreenithi20/mutaTest-verify:latest
+        run: docker pull sreenithi20/mutatest-verify:latest
 
       - name: Run MutaTest pipeline
         env:
@@ -43,7 +48,7 @@ jobs:
             -e SPRING_DATA_MONGODB_URI=$MONGODB_URI \
             -e SPRING_PROFILES_ACTIVE=cli \
             -v ${{ github.workspace }}:/workspace \
-            sreenithi20/mutaTest-verify:latest \
+            sreenithi20/mutatest-verify:latest \
             --mode=cli \
             --source=/workspace/${{ steps.changed.outputs.files }} \
             --target-score=70 \
